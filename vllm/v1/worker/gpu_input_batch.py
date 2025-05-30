@@ -81,7 +81,7 @@ class InputBatch:
         self.token_ids_cpu_tensor = torch.zeros(
             (max_num_reqs, max_model_len),
             device="cpu",
-            dtype=torch.int32,
+            dtype=torch.int64,
             pin_memory=False,
         )
         self.token_ids_cpu = self.token_ids_cpu_tensor.numpy()

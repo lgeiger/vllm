@@ -199,7 +199,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         # Persistent buffers for CUDA graphs.
         self.input_ids = torch.zeros(self.max_num_tokens,
-                                     dtype=torch.int32,
+                                     dtype=torch.int64,
                                      device=self.device)
         self.positions = torch.zeros(self.max_num_tokens,
                                      dtype=torch.int64,
@@ -256,7 +256,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # a faster version of creating a new tensor every time. Thus, we should
         # not make any assumptions about the values in these tensors.
         self.input_ids_cpu = torch.zeros(self.max_num_tokens,
-                                         dtype=torch.int32,
+                                         dtype=torch.int64,
                                          device="cpu",
                                          pin_memory=self.pin_memory)
         self.positions_cpu = torch.zeros(self.max_num_tokens,
@@ -517,8 +517,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # Get the number of scheduled tokens for each request.
         req_ids = self.input_batch.req_ids
         tokens = [scheduler_output.num_scheduled_tokens[i] for i in req_ids]
-        num_scheduled_tokens = np.array(tokens, dtype=np.int32)
-        max_num_scheduled_tokens = max(tokens)
+        num_scheduled_tokens = np.array(tokens, dtype=np.int64)
+        max_num_scheduled_tokens = int(num_scheduled_tokens.max())
 
         # Get request indices.
         # E.g., [2, 5, 3] -> [0, 0, 1, 1, 1, 1, 1, 2, 2, 2]
