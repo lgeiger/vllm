@@ -25,6 +25,7 @@
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import partial
+from itertools import islice
 from typing import Any
 
 import numpy as np
@@ -606,7 +607,7 @@ class Qwen3MoeLLMModel(Qwen3MoeModel):
         positions: torch.Tensor,
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
-        deepstack_input_embeds: IntermediateTensors | None = None,
+        deepstack_input_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor | IntermediateTensors:
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
@@ -618,24 +619,15 @@ class Qwen3MoeLLMModel(Qwen3MoeModel):
             assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
-        for layer_idx, layer in enumerate(
-            self.layers[self.start_layer : self.end_layer]
+        for layer_idx, layer in islice(
+            enumerate(self.layers), self.start_layer, self.end_layer
         ):
-            layer_idx = layer_idx + self.start_layer
-
-            hidden_states, residual = layer(
-                positions,
-                hidden_states,
-                residual,
-            )
+            hidden_states, residual = layer(positions, hidden_states, residual)
 
             if deepstack_input_embeds is not None and layer_idx in range(
                 0, len(deepstack_input_embeds)
             ):
-                hidden_states = (
-                    hidden_states
-                    + deepstack_input_embeds[f"deepstack_input_embeds_{layer_idx}"]
-                )
+                hidden_states += deepstack_input_embeds[layer_idx]
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors(
@@ -1184,40 +1176,27 @@ class Qwen3OmniMoeThinkerForConditionalGeneration(
         self.visual_dim = thinker_config.vision_config.out_hidden_size
         self.multiscale_dim = self.visual_dim * self.deepstack_num_level
 
-    def _get_deepstack_input_embeds(self, num_tokens: int) -> IntermediateTensors:
-        # get deepstack_input_embeds from buffer, and clear the buffer
-        return IntermediateTensors(
-            {
-                f"deepstack_input_embeds_{idx}": self.deepstack_input_embeds[idx][
-                    :num_tokens
-                ]
-                for idx in range(self.deepstack_num_level)
-            }
-        )
+    def _get_deepstack_input_embeds(self, num_tokens: int) -> torch.Tensor:
+        # get deepstack_input_embeds from buffer
+        return self.deepstack_input_embeds[:, :num_tokens]
 
     def _set_deepstack_input_embeds(self, deepstack_input_embeds: torch.Tensor) -> None:
         # set deepstack_input_embeds to buffer
         num_tokens = deepstack_input_embeds.size(1)
         if num_tokens > self.deepstack_input_embeds[0].size(0):
-            self.deepstack_input_embeds = [
-                torch.zeros(
-                    num_tokens,
-                    self.config.text_config.hidden_size,
-                    device=self.deepstack_input_embeds[0].device,
-                    dtype=self.deepstack_input_embeds[0].dtype,
-                )
-                for _ in range(self.deepstack_num_level)
-            ]
-        for idx in range(self.deepstack_num_level):
-            self.deepstack_input_embeds[idx][:num_tokens].copy_(
-                deepstack_input_embeds[idx]
+            self.deepstack_input_embeds = torch.zeros(
+                self.deepstack_num_level,
+                num_tokens,
+                self.config.text_config.hidden_size,
+                device=self.deepstack_input_embeds[0].device,
+                dtype=self.deepstack_input_embeds[0].dtype,
             )
+        self.deepstack_input_embeds[:, :num_tokens].copy_(deepstack_input_embeds)
 
     def _clear_deepstack_input_embeds(self, num_tokens: int) -> None:
         # clear deepstack_input_embeds in buffer
         if num_tokens > 0:
-            for idx in range(self.deepstack_num_level):
-                self.deepstack_input_embeds[idx][:num_tokens].zero_()
+            self.deepstack_input_embeds[:, :num_tokens].zero_()
 
     def _parse_and_validate_multimodal_inputs(self, **kwargs: object) -> dict:
         mm_input_by_modality = {}

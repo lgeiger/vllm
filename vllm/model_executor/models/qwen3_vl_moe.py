@@ -91,7 +91,7 @@ class Qwen3MoeLLMModel(Qwen3MoeModel):
         positions: torch.Tensor,
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
-        deepstack_input_embeds: IntermediateTensors | None = None,
+        deepstack_input_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor | IntermediateTensors:
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
@@ -106,19 +106,12 @@ class Qwen3MoeLLMModel(Qwen3MoeModel):
         for layer_idx, layer in islice(
             enumerate(self.layers), self.start_layer, self.end_layer
         ):
-            hidden_states, residual = layer(
-                positions,
-                hidden_states,
-                residual,
-            )
+            hidden_states, residual = layer(positions, hidden_states, residual)
 
             if deepstack_input_embeds is not None and layer_idx in range(
                 0, len(deepstack_input_embeds)
             ):
-                hidden_states = (
-                    hidden_states
-                    + deepstack_input_embeds[f"deepstack_input_embeds_{layer_idx}"]
-                )
+                hidden_states += deepstack_input_embeds[layer_idx]
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors(
@@ -402,13 +395,11 @@ class Qwen3VLMoeForConditionalGeneration(Qwen3VLForConditionalGeneration):
         )
         # register buffer for deepstack
         if self.use_deepstack and self.visual is not None:
-            self.deepstack_input_embeds = [
-                torch.zeros(
-                    vllm_config.scheduler_config.max_num_batched_tokens,
-                    config.text_config.hidden_size,
-                )
-                for _ in range(self.deepstack_num_level)
-            ]
+            self.deepstack_input_embeds = torch.zeros(
+                self.deepstack_num_level,
+                vllm_config.scheduler_config.max_num_batched_tokens,
+                config.text_config.hidden_size,
+            )
         else:
             self.deepstack_input_embeds = None
         self.visual_dim = config.vision_config.out_hidden_size
