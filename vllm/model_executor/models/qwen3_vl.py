@@ -1417,58 +1417,26 @@ class Qwen3VLForConditionalGeneration(
         input_tokens: list[int],
         mm_features: list[MultiModalFeatureSpec],
     ) -> tuple[torch.Tensor, int]:
-        kwargs = MultiModalFeatureSpec.gather_kwargs(
-            mm_features,
-            {"image_grid_thw", "video_grid_thw"},
-        )
-        image_grid_thw = [item.tolist() for item in kwargs.get("image_grid_thw", [])]
-        video_grid_thw = [item.tolist() for item in kwargs.get("video_grid_thw", [])]
+        spatial_merge_size = self.config.vision_config.spatial_merge_size
 
-        video_grid_thw = [[1, h, w] for t, h, w in video_grid_thw for _ in range(t)]
-
-        hf_config = self.config
-        image_token_id = hf_config.image_token_id
-        video_token_id = hf_config.video_token_id
-        vision_start_token_id = hf_config.vision_start_token_id
-        spatial_merge_size = hf_config.vision_config.spatial_merge_size
-
-        input_tokens_array = np.array(input_tokens)
-        vision_start_mask = input_tokens_array == vision_start_token_id
-        vision_tokens = input_tokens_array[vision_start_mask.nonzero()[0] + 1]
-        image_nums = np.count_nonzero(vision_tokens == image_token_id)
-        video_nums = np.count_nonzero(vision_tokens == video_token_id)
-        llm_pos_ids_list: list = []
-
+        llm_pos_ids_list: list[np.ndarray] = []
         st = 0
-        remain_images, remain_videos = image_nums, video_nums
+        for mm_feature in sorted(mm_features, key=lambda f: f.mm_position.offset):
+            pos_info = mm_feature.mm_position
 
-        image_index, video_index = 0, 0
-        for _ in range(image_nums + video_nums):
-            if image_token_id in input_tokens and remain_images > 0:
-                ed_image = input_tokens.index(image_token_id, st)
+            if mm_feature.modality == "image":
+                t, h, w = mm_feature.data["image_grid_thw"].tolist()
+            elif mm_feature.modality == "video":
+                t, h, w = mm_feature.data["video_grid_thw"].tolist()
             else:
-                ed_image = len(input_tokens) + 1
-            if video_token_id in input_tokens and remain_videos > 0:
-                ed_video = input_tokens.index(video_token_id, st)
-            else:
-                ed_video = len(input_tokens) + 1
-            if ed_image < ed_video:
-                t, h, w = image_grid_thw[image_index]
-                image_index += 1
-                remain_images -= 1
-                ed = ed_image
-            else:
-                t, h, w = video_grid_thw[video_index]
-                video_index += 1
-                remain_videos -= 1
-                ed = ed_video
+                raise ValueError(f"Unsupported modality: {mm_feature.modality}")
 
             llm_grid_t, llm_grid_h, llm_grid_w = (
                 t,
                 h // spatial_merge_size,
                 w // spatial_merge_size,
             )
-            text_len = ed - st
+            text_len = pos_info.offset - st
 
             st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
             llm_pos_ids_list.append(
@@ -1477,7 +1445,7 @@ class Qwen3VLForConditionalGeneration(
 
             grid_indices = np.indices((llm_grid_t, llm_grid_h, llm_grid_w))
             llm_pos_ids_list.append(grid_indices.reshape(3, -1) + text_len + st_idx)
-            st = ed + llm_grid_t * llm_grid_h * llm_grid_w
+            st = pos_info.offset + pos_info.length
 
         if st < len(input_tokens):
             st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
