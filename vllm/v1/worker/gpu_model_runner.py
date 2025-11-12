@@ -908,6 +908,16 @@ class GPUModelRunner(
                 req_state.mm_features,
             )
         )
+        mrope_positions_old, mrope_position_delta_old = (
+            model.get_mrope_input_positions_old(
+                req_state.prompt_token_ids,
+                req_state.mm_features,
+            )
+        )
+        assert req_state.mrope_position_delta == mrope_position_delta_old, "delta"
+        np.testing.assert_array_equal(
+            req_state.mrope_positions.numpy(), mrope_positions_old.numpy()
+        )
 
     def _extract_mm_kwargs(
         self,
