@@ -149,11 +149,13 @@ class SupportsMultiModal(Protocol):
             is_text = ~is_multimodal
             text_embeds = embed_input_ids(input_ids[is_text])
 
-            return torch.empty(
+            output = torch.empty(
                 (input_ids.shape[0], text_embeds.shape[1]),
                 dtype=text_embeds.dtype,
                 device=text_embeds.device,
-            ).masked_scatter_(is_text.unsqueeze_(-1), text_embeds)
+            )
+            output[is_text] = text_embeds
+            return output
 
         return embed_input_ids(input_ids)
 

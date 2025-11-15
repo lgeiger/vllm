@@ -445,17 +445,10 @@ def _merge_multimodal_embeddings(
         return inputs_embeds
 
     mm_embeds_flat = _flatten_embeddings(multimodal_embeddings)
-    input_dtype = inputs_embeds.dtype
 
     try:
-        # For debugging
-        # inputs_embeds[is_multimodal] = mm_embeds_flat.to(dtype=input_dtype)
-
-        # NOTE: This can avoid D2H sync (#22105), but fails to
-        # raise an error if is_multimodal.sum() < len(mm_embeds_flat)
-        inputs_embeds.masked_scatter_(
-            is_multimodal.unsqueeze(-1), mm_embeds_flat.to(dtype=input_dtype)
-        )
+        # NOTE: This doesn't introduce a CPU/GPU sync if is_multimodal is on CPU
+        inputs_embeds[is_multimodal] = mm_embeds_flat.to(dtype=inputs_embeds.dtype)
     except RuntimeError as e:
         num_actual_tokens = len(mm_embeds_flat)
         num_expected_tokens = is_multimodal.sum().item()
